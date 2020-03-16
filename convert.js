@@ -4,6 +4,7 @@ const {promisify} = require('util'),
 	child_process = require('child_process'),
 	exec = promisify(child_process.exec),
 	mkdirp = require('mkdirp'),
+	ElapsedTimer = require('./elapsedTimer'),
 	glob = promisify(require('glob'));
 
 //ensure source and destination directories exist, even if the first run means they contain nothing, the directories will be set up
@@ -24,11 +25,12 @@ async function convert() {
 
 	//cumulative stats for how long everything takes and what was needed
 	const stats = {
-		videos: 0,
-		hasJapaneseAudio: 0,
-		convertedAudio: 0,
-		convertedVideo: 0
-	};
+			videos: 0,
+			hasJapaneseAudio: 0,
+			convertedAudio: 0,
+			convertedVideo: 0
+		},
+		totalTimer = new ElapsedTimer();
 
 	const videos = await glob(`./src/**/*.mkv`);
 	// const videos = await glob(`./src/Ak*.mkv`);
@@ -81,8 +83,10 @@ async function convert() {
 
 		//preserve the source file structure and output to a matching directory in dest/, but we need to make sure that path exists first
 		await mkdirp(destPath);
-		const start = Date.now();
+		const videoTimer = new ElapsedTimer();
+
 		await new Promise((resolve, reject) => {
+			console.log(`starting at ${new Date().toLocaleString()}`);
 			const child = child_process.spawn(`ffmpeg`, [`-loglevel warning -stats -i "${videoPath}" ${jpStreamMap} -sn ${codecs} "${path.join(destPath, path.basename(fileName, '.mkv'))}.mp4"`], {shell: true});
 			child.stdout.on('data', data => console.log(data.toString()));
 			//ffmpeg logs progress information (including speed) to stderr, ignore it while it's processing or it's just a lot of unnecessary
@@ -91,17 +95,13 @@ async function convert() {
 			let lastProgress = '';
 			child.stderr.on('data', data => lastProgress = data.toString());
 			child.on("close", code => {
-				const elapsedMs = Date.now() - start,
-					minutes = Math.floor(elapsedMs / 60000),
-					seconds = (elapsedMs % 60000) / 1000,
-					pad = num => num.toFixed(0).padStart(2, '0');
-
-				console.log(`time taken to convert: ${pad(minutes)}:${pad(seconds)}`);
+				console.log(`time taken to process: ${videoTimer.getElapsed()} (finished at ${new Date().toLocaleString()})`);
 				console.log(lastProgress);
 				code === 0 ? resolve() : reject();
 			})
 		});
 	}
 	console.table(stats);
+	console.log(`Total time: ${totalTimer.getElapsed()}`);
 }
 convert();
