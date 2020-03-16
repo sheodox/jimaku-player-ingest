@@ -14,12 +14,15 @@ const {promisify} = require('util'),
 });
 
 async function convert() {
+	//don't want to mix in new videos with the previously output stuff, plus without -y ffmpeg
+	//will stall asking if files should be overwritten, but this doesn't use that.
 	const destVideos = await glob('./dest/**/*.mp4');
 	if (destVideos.length) {
 		console.error(`dest has videos, clean it out first before running!`);
 		return;
 	}
 
+	//cumulative stats for how long everything takes and what was needed
 	const stats = {
 		videos: 0,
 		hasJapaneseAudio: 0,
@@ -34,6 +37,7 @@ async function convert() {
 		const fileName = path.basename(videoPath),
 			destPath = path.dirname(videoPath).replace('./src', './dest');
 
+		//collect information on the audio and video streams
 		const audioProbeExec = await exec(`ffprobe -v error -show_streams -select_streams a "${videoPath}" -print_format json`),
 			videoProbeExec = await exec(`ffprobe -v error -show_streams -select_streams v "${videoPath}" -print_format json`),
 			audioStreams = JSON.parse(audioProbeExec.stdout).streams,
@@ -46,8 +50,11 @@ async function convert() {
 			jpStreamMap = hasJpStream ? '-map 0:m:language:jpn -map 0:v' : '',
 			//if it's mp3 or aac we don't want to re-encode, but if it's something different just convert it
 			audioCodec = (jpStream ? jpStream : audioStreams[0]).codec_name,
+			//check if audio/video streams have web friendly codecs, convert if needed
 			needsAudioConversion = !['mp3', 'aac'].includes(audioCodec),
 			needsVideoConversion = videoStreams[0].codec_name !== 'h264',
+			//'copy' codecs just leave the stream as-is, anything else will re-encode the stream and takes significantly more time
+			//and processing power, instead of blanket converting everything we check first to see if it's needed
 			vcodec = `-vcodec ${needsVideoConversion ? 'libx264' : 'copy'}`,
 			acodec =  `-acodec ${needsAudioConversion ? 'aac' : 'copy'}`,
 			codecs = `${vcodec} ${acodec}`;
@@ -72,12 +79,15 @@ async function convert() {
 			stats.hasJapaneseAudio++;
 		}
 
+		//preserve the source file structure and output to a matching directory in dest/, but we need to make sure that path exists first
 		await mkdirp(destPath);
 		const start = Date.now();
 		await new Promise((resolve, reject) => {
 			const child = child_process.spawn(`ffmpeg`, [`-loglevel warning -stats -i "${videoPath}" ${jpStreamMap} -sn ${codecs} "${path.join(destPath, path.basename(fileName, '.mkv'))}.mp4"`], {shell: true});
 			child.stdout.on('data', data => console.log(data.toString()));
-			//ffmpeg logs progress information (including speed) to stderr
+			//ffmpeg logs progress information (including speed) to stderr, ignore it while it's processing or it's just a lot of unnecessary
+			//logging, but save the last thing that was logged so we can log later, the progress logs include a speed factor comparing the
+			//speed of the ffmpeg operation to the length of the source media, nice to know how fast or slow it's going so we log this once later
 			let lastProgress = '';
 			child.stderr.on('data', data => lastProgress = data.toString());
 			child.on("close", code => {
