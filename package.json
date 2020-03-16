@@ -1,0 +1,15 @@
+{
+  "name": "mkv2mp4",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node convert"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "glob": "^7.1.6",
+    "mkdirp": "^1.0.3"
+  }
+}
