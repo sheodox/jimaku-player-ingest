@@ -33,7 +33,6 @@ async function convert() {
 		totalTimer = new ElapsedTimer();
 
 	const videos = await glob(`./src/**/*.mkv`);
-	// const videos = await glob(`./src/Ak*.mkv`);
 
 	for (const videoPath of videos) {
 		const fileName = path.basename(videoPath),
