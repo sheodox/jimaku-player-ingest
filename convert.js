@@ -34,7 +34,8 @@ async function convert() {
 
 	const videos = await glob(`./src/**/*.mkv`);
 
-	for (const videoPath of videos) {
+	for (let i = 0; i < videos.length; i++) {
+		const videoPath = videos[i];
 		const fileName = path.basename(videoPath),
 			destPath = path.dirname(videoPath).replace('./src', './dest');
 
@@ -85,7 +86,7 @@ async function convert() {
 		const videoTimer = new ElapsedTimer();
 
 		await new Promise((resolve, reject) => {
-			console.log(`starting at ${new Date().toLocaleString()}`);
+			console.log(`[${i + 1}/${videos.length}] starting at ${new Date().toLocaleString()}`);
 			const child = child_process.spawn(`ffmpeg`, [`-loglevel warning -stats -i "${videoPath}" ${jpStreamMap} -sn ${codecs} "${path.join(destPath, path.basename(fileName, '.mkv'))}.mp4"`], {shell: true});
 			child.stdout.on('data', data => console.log(data.toString()));
 			//ffmpeg logs progress information (including speed) to stderr, ignore it while it's processing or it's just a lot of unnecessary
