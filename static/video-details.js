@@ -1,9 +1,23 @@
 import {writable} from 'svelte/store';
+import {createAutoExpireToast} from "sheodox-ui/components/toast";
 
-export const detected = new writable(null);
+export const detected = writable(null);
 
-fetch('/video/detect')
-	.then(res => res.json())
-	.then(d => {
-		detected.set(d);
-	})
+export function detect(force) {
+	detected.set(null);
+	fetch('/video/detect' + (force ? '?force=true' : ''))
+		.then(res => {
+			if (res.status === 409) {
+				createAutoExpireToast({
+					title: `Can't scan right now`,
+					message: `You can't scan while video transcoding is in progress.`
+				})
+			}
+			return res.json();
+		})
+		.then(d => {
+			detected.set(d);
+		})
+}
+
+detect();

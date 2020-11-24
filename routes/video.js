@@ -16,17 +16,37 @@ module.exports = (io) => {
 		}
 	}
 
+	let converting = false,
+		detectPromise;
+
 	router.get('/detect', async (req, res) => {
-		if (!detected) {
-			detected = await detect()
+		// don't want to re-scan while transcoding, we should already know all that we're going to know
+		if (converting && req.query.force) {
+			res.status(409); //conflict
+			res.json(detected);
+			return;
+		}
+		if (!detected || req.query.force) {
+			//if a detect request was already made, just reuse that instead of starting a second concurrent one
+			if (!detectPromise) {
+				console.log('scanning videos');
+				detectPromise = detect();
+			}
+			detected = await detectPromise;
+			detectPromise = null;
 		}
 		res.json(detected);
 	});
 
 	router.get('/transcode', async (req, res) => {
 		function onStart() {
+			converting = true;
 			errors = [];
 			criticalErrors = [];
+			transcodePromise.finally(() => {
+				converting = false;
+				console.log('transcoding done!');
+			})
 		}
 
 		function onProgress(progress) {
@@ -46,7 +66,7 @@ module.exports = (io) => {
 			io.emit('criticalError', errorToToastArguments('Critical Error!', e));
 		}
 
-		tryConvert(onStart, onProgress, onError, onCriticalError);
+		const transcodePromise = tryConvert(onStart, onProgress, onError, onCriticalError);
 
 		res.send();
 	});
