@@ -3,6 +3,6 @@ module.exports = {
 		audio: ['mp3', 'aac'],
 		video: ['h264'],
 		//just subtitle formats supported by jimaku-player
-		subtitle: ['ass', 'srt', 'ssa', 'webvtt']
+		subtitle: ['ass', 'subrip', 'ssa', 'webvtt']
 	}
 };

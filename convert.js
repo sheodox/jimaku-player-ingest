@@ -7,6 +7,22 @@ const {promisify} = require('util'),
 	glob = promisify(require('glob')),
 	{safeCodecs} = require('./codecs');
 
+
+function translateMediaInfoSubtitleFormat(format) {
+	return {
+		'S_TEXT/WEBVTT': 'webvtt',
+		'ASS': 'ass'
+	}[format] || format.toLowerCase();
+}
+
+function getSubtitleExtension(format) {
+	//the extension and the format might not be the same, try and correct that
+	return {
+		subrip: 'srt',
+		webvtt: 'vtt'
+	}[format] || format.toLowerCase();
+}
+
 //ensure source and destination directories exist, even if the first run means they contain nothing, the directories will be set up
 async function detect() {
 	await mkdirp('./videos/src');
@@ -27,6 +43,25 @@ async function detect() {
 			audioStreams = audioProbe.streams,
 			videoStreams = videoProbe.streams,
 			subtitleStreams = subtitleProbe.streams;
+
+		const mediaInfoOutput = (await exec(`mediainfo "${videoPath}" --Inform="Text;%ID%,%Format%|"`)).stdout,
+			mediaInfoCodecNames = new Map(mediaInfoOutput
+				.trim()
+				.split('|')
+				.filter(stream => !!stream)
+				.map(stream => {
+					const [id, format] = stream.split(',');
+					// it seems that mediainfo considers the container to be ID=0, so the mediainfo stream IDs are one higher
+					// than the respective ffprobe stream indices
+					return [parseInt(id, 10) - 1, translateMediaInfoSubtitleFormat(format)];
+				}));
+
+		for (const stream of subtitleStreams) {
+			//sometimes ffprobe doesn't know the subtitle format, fall back to using `mediainfo`
+			if (typeof stream.codec_name === 'undefined') {
+				stream.codec_name = mediaInfoCodecNames.get(stream.index);
+			}
+		}
 
 		detected.push({
 			videoName: path.basename(videoPath),
@@ -92,7 +127,7 @@ async function tryConvert(onStart, onProgress, onError, onCriticalError) {
 
 	//this takes a long time, onProgress will emit occasional progress events to the browser,
 	//so dont await this. the caller only cares if it started or not
-	convert(onProgress)
+	await convert(onProgress)
 		.then(() => {
 			converting = false;
 		})
@@ -178,6 +213,7 @@ async function convert(onProgress) {
 				//split them out into distinct videos per audio stream later
 				`-map 0:v:0 ${vcodec}`, //probably don't need more than one video stream?
 				`-map 0:a ${acodec}`,
+				`-sn`, // don't copy subtitles, they'll be copied from the original file
 				quotedFullTranscodePath
 			];
 
@@ -229,20 +265,22 @@ async function convert(onProgress) {
 
 		for (let i = 0; i < video.subtitleStreams.length; i++) {
 			const subtitleStream = video.subtitleStreams[i],
-				format = subtitleStream.codec_name;
-			if (safeCodecs.subtitle.includes(format)) {
-				const extractFilePath = `./temp/temp-extract.${format}`;
+				extension = getSubtitleExtension(subtitleStream.codec_name);
+			if (safeCodecs.subtitle.includes(subtitleStream.codec_name)) {
+				const extractFilePath = `./temp/temp-extract.${extension}`;
 				await runffmpeg([
 					//don't prompt if we want to overwrite the file, it's a temp file so nothing worthwhile would be lost.
 					//if somehow a transcode failed and this file still exists we'd otherwise just sit there and spin
 					'-y',
+					`-analyzeduration 50M -probesize 50M`,
+					`-c:s ${subtitleStream.codec_name}`,
 					`-i "${video.videoPath}"`,
 					`-map 0:s:${i}`,
 					extractFilePath
 				]);
 
 				metadata.subtitles.push({
-					format,
+					format: extension,
 					language: subtitleStream.tags.language,
 					title: subtitleStream.tags.title || subtitleStream.tags.language || `Subtitle Stream ${i + 1}`,
 					content: (await fs.readFile(extractFilePath)).toString()
