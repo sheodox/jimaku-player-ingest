@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node app.js",
     "start:dev": "nodemon app.js --ignore static --ignore videos/**/*.json",
+    "build": "webpack",
     "build:dev": "webpack --watch"
   },
   "author": "",
