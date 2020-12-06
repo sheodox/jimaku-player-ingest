@@ -30,6 +30,7 @@
 					{/if}
 				</td>
 			</tr>
+			<slot name="extra-rows" />
 		</tbody>
 	</table>
 {/if}

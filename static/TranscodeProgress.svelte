@@ -16,7 +16,14 @@
 			<div class="column">
 				<label for="total-progress">Finished ({$progress.done}/{$progress.total})</label>
 				<Progress value={$progress.done} max={$progress.total} id="total-progress"/>
-				<TaskTime task={$progress} />
+				<TaskTime task={$progress}>
+					<tr slot="extra-rows">
+						{#if $progress.done < $progress.total && $currentFileName}
+							<th scope="row">Processing</th>
+							<td><em>{$currentFileName}</em></td>
+						{/if}
+					</tr>
+				</TaskTime>
 			</div>
 
 			<table class="column">
@@ -52,7 +59,14 @@
 {/if}
 
 <script>
+	import {derived} from 'svelte/store';
 	import {Progress} from 'sheodox-ui';
 	import {progress} from "./progress";
 	import TaskTime from "./TaskTime.svelte";
+
+	const currentFileName = derived(progress, progress => {
+		if (progress && progress.tasks.length > 0) {
+			return progress.tasks[progress.tasks.length - 1].videoName
+		}
+	})
 </script>

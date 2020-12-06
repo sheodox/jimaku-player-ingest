@@ -19,14 +19,16 @@
 		<thead>
 		<tr>
 			<th>Codec</th>
+			<th>Profile</th>
 		</tr>
 		</thead>
 		<tbody>
 		{#each details.videoStreams as stream}
 			<tr>
-				<td class={safeCodecs.video.includes(stream.codec_name) ? 'good' : 'ok'}>
+				<td class={isGoodVideoCodec(stream) ? 'good' : 'ok'}>
 					<abbr title={stream.codec_long_name}>{stream.codec_name}</abbr>
 				</td>
+				<td class={isGoodVideoProfile(stream) ? 'good' : 'ok'}>{stream.profile || ''}</td>
 			</tr>
 		{/each}
 		</tbody>
@@ -37,6 +39,7 @@
 		<thead>
 		<tr>
 			<th>Codec</th>
+			<th>Profile</th>
 			<th>Language</th>
 			<th>Title</th>
 		</tr>
@@ -44,8 +47,13 @@
 		<tbody>
 		{#each details.audioStreams as stream}
 			<tr>
-				<td class={safeCodecs.audio.includes(stream.codec_name) ? 'good' : 'ok'}>
+				<td class={isGoodAudioCodec(stream) ? 'good' : 'ok'}>
 					<abbr title={stream.codec_long_name}>{stream.codec_name}</abbr>
+				</td>
+				<td
+					class={isGoodAudioProfile(stream) ? 'good' : 'ok'}
+				>
+					{stream.profile || ''}
 				</td>
 				<td>{stream.tags.language ?? ''}</td>
 				<td>{stream.tags.title ?? ''}</td>
@@ -79,5 +87,12 @@
 
 <script>
 	export let details;
-	import {safeCodecs} from '../codecs';
+	console.log(details);
+	import {
+		safeCodecs,
+		isGoodVideoCodec,
+		isGoodVideoProfile,
+		isGoodAudioCodec,
+		isGoodAudioProfile,
+	} from '../codecs';
 </script>

@@ -5,8 +5,7 @@ const {promisify} = require('util'),
 	exec = promisify(child_process.exec),
 	mkdirp = require('mkdirp'),
 	glob = promisify(require('glob')),
-	{safeCodecs} = require('./codecs');
-
+	{safeCodecs, isGoodVideoProfile, isGoodAudioProfile} = require("./codecs");
 
 function translateMediaInfoSubtitleFormat(format) {
 	return {
@@ -23,6 +22,10 @@ function getSubtitleExtension(format) {
 	}[format] || format.toLowerCase();
 }
 
+function removeExtension(fileName) {
+	return path.basename(fileName, path.extname(fileName));
+}
+
 //ensure source and destination directories exist, even if the first run means they contain nothing, the directories will be set up
 async function detect() {
 	await mkdirp('./videos/src');
@@ -35,11 +38,9 @@ async function detect() {
 	for (let i = 0; i < videos.length; i++) {
 		const videoPath = videos[i],
 			//collect information on the audio and video streams
-			streamProbe = JSON.parse((await exec(`ffprobe -v error -show_streams "${videoPath}" -print_format json`)).stdout),
 			audioProbe = JSON.parse((await exec(`ffprobe -v error -show_streams -select_streams a "${videoPath}" -print_format json`)).stdout),
 			videoProbe = JSON.parse((await exec(`ffprobe -v error -show_streams -select_streams v "${videoPath}" -print_format json`)).stdout),
 			subtitleProbe = JSON.parse((await exec(`ffprobe -v error -show_streams -select_streams s "${videoPath}" -print_format json`)).stdout),
-			streams = streamProbe.streams,
 			audioStreams = audioProbe.streams,
 			videoStreams = videoProbe.streams,
 			subtitleStreams = subtitleProbe.streams;
@@ -65,19 +66,15 @@ async function detect() {
 
 		detected.push({
 			videoName: path.basename(videoPath),
-			videoNameBase: path.basename(videoPath, path.extname(videoPath)),
+			videoNameBase: removeExtension(videoPath),
 			videoPath,
-			streamProbe,
-			audioProbe,
-			videoProbe,
-			subtitleProbe,
-			streams,
 			audioStreams,
 			videoStreams,
 			subtitleStreams
 		});
 	}
 
+	console.log(`scan done! detected ${detected.length} video(s)`);
 	return detected;
 }
 
@@ -123,6 +120,7 @@ async function tryConvert(onStart, onProgress, onError, onCriticalError) {
 		return;
 	}
 
+	//now that we know we're actually going to start transcoding, notify the caller
 	onStart();
 
 	//this takes a long time, onProgress will emit occasional progress events to the browser,
@@ -164,14 +162,8 @@ async function convert(onProgress) {
 		/**
 		 * Web browsers don't really support multiple audio streams in one video, there are some experimental APIs
 		 * that are very poorly supported (video.audioTracks is behind a flag in most browsers, and isn't really
-		 * functional in Chrome and Firefox). To get around this we create separate video files, one for each
-		 * audio stream present.
-		 *
-		 * The process is done in two steps. Re-encoding video to a different codec can take a long time, so it
-		 * just re-encodes all of the streams at once to a temporary file, then subsequently creates files with
-		 * one audio stream per video.
+		 * functional in Chrome and Firefox). To get around this we use Media Source Extensions and DASH.
 		 */
-
 		const taskDetails = {
 				startTime: Date.now(),
 				videoName: video.videoName,
@@ -179,128 +171,183 @@ async function convert(onProgress) {
 			},
 			destPath = path.dirname(video.videoPath)
 				.replace('./videos/src', './videos/dest'),
-			//check if audio/video streams have web friendly codecs, convert if needed
-			needsAudioConversion = !video.audioStreams.every(stream => safeCodecs.audio.includes(stream.codec_name)),
-			needsVideoConversion = !video.videoStreams.every(stream => safeCodecs.video.includes(stream.codec_name)),
-			//'copy' codecs just leave the stream as-is, anything else will re-encode the stream and takes significantly more time
-			//and processing power, instead of blanket converting everything we check first to see if it's needed
-			vcodec = `-vcodec ${needsVideoConversion ? 'libx264' : 'copy'}`,
-			//convert audio to aac with a constant bitrate for simpler playback syncing
-			acodec = `-acodec ${needsAudioConversion ? 'aac' : 'copy'}`;
+			//if we just did 'copy' codecs it'd be much faster, but MSE is really picky with codecs and profiles and there
+			//are a billion to choose from so we're going to just chose some specific ones and stick with them
+			acodec = `-acodec aac`;
 
-		if (needsAudioConversion) {
-			progress.audioStreamsTranscoded += video.audioStreams.length;
-		}
-		else {
-			progress.audioStreamsCopied += video.audioStreams.length;
-		}
+		const videoTranscodeFile = video.videoNameBase + '.mp4',
+			videoTranscodePath = `${path.join(destPath, videoTranscodeFile)}`,
+			quotedVideoTranscodePath = `"${videoTranscodePath}"`;
 
 		//track some metadata, including names of individually extracted audio streams
 		const metadata = {
 			name: video.videoNameBase,
-			videos: [],
+			video: `${video.videoNameBase}_dashinit.mp4`,
+			audio: [],
 			subtitles: []
 		};
 
-		//currently only care about one video stream until I have a good reason not to
-		needsVideoConversion ? progress.videoStreamsTranscoded++ : progress.videoStreamsCopied++;
-
-		const temporaryFullTranscodePath = `${path.join(destPath, video.videoNameBase)}-temporary.mp4`,
-			quotedFullTranscodePath = `"${temporaryFullTranscodePath}"`,
-			ffmpegVideoArgs = [
-				`-i "${video.videoPath}"`,
-				//select all video and audio streams, transcode them all for now, then
-				//split them out into distinct videos per audio stream later
-				`-map 0:v:0 ${vcodec}`, //probably don't need more than one video stream?
-				`-map 0:a ${acodec}`,
-				`-sn`, // don't copy subtitles, they'll be copied from the original file
-				quotedFullTranscodePath
-			];
-
 		Object.assign(taskDetails, {
-			needsAudioConversion,
-			needsVideoConversion,
 			processing: true,
 			processed: false,
-			// individual ffmpeg tasks to run: transcode, audio-stream specific mux, subtitles
 			done: 0,
-			total: 3
 		});
-		progress.tasks.push(taskDetails);
-		updateProgress();
 
 		//preserve the source file structure and output to a matching directory in dest/, but we need to make sure that path exists first
 		await mkdirp(destPath);
 
-		await runffmpeg(ffmpegVideoArgs);
-		taskDetails.done++;
-		updateProgress();
-
-		/**
-		 * From the fully transcoded file export separate mp4 files for each audio stream
-		 */
-		for (let i = 0; i < video.audioStreams.length; i++) {
-			const audioStream = video.audioStreams[i],
-				//if it's mp3 we leave it, anything not mp3 or aac gets converted to aac
-				//so mp3 is the only case where it's anything but aac
-				fileName = `${video.videoNameBase}-${i}.mp4`;
-
-			metadata.videos.push({
-				language: audioStream.tags.language,
-				title: audioStream.tags.title,
-				fileName
-			});
-
-			await runffmpeg([
-				`-i ${quotedFullTranscodePath}`,
-				//the full transcode already re-encoded to web safe codecs, just copy them
-				`-map 0:v -c:v copy`,
-				`-map 0:a:${i} -c:a copy`,
-				`"${path.join(destPath, fileName)}"`
-			]);
-		}
-
-		taskDetails.done++;
-		updateProgress();
-
-		for (let i = 0; i < video.subtitleStreams.length; i++) {
-			const subtitleStream = video.subtitleStreams[i],
-				extension = getSubtitleExtension(subtitleStream.codec_name);
-			if (safeCodecs.subtitle.includes(subtitleStream.codec_name)) {
-				const extractFilePath = `./temp/temp-extract.${extension}`;
+		progress.tasks.push(taskDetails);
+		//the individual steps are an array of async functions, this makes it easier to mentally separate the tasks that need
+		//doing, and lets the transcode step progress be tracked automatically
+		const steps = [
+			//video transcode
+			async () => {
+				const goodProfile = isGoodVideoProfile(video.videoStreams[0]);
+		    	//transcode the video
 				await runffmpeg([
-					//don't prompt if we want to overwrite the file, it's a temp file so nothing worthwhile would be lost.
-					//if somehow a transcode failed and this file still exists we'd otherwise just sit there and spin
-					'-y',
-					`-analyzeduration 50M -probesize 50M`,
-					`-c:s ${subtitleStream.codec_name}`,
 					`-i "${video.videoPath}"`,
-					`-map 0:s:${i}`,
-					extractFilePath
+					//select all video and audio streams, transcode them all for now, then
+					//split them out into distinct videos per audio stream later
+					`-map 0:v:0`, //probably don't need more than one video stream?
+					//move some data to the beginning of the container, this apparently makes
+					//streaming faster but probably doesn't matter with DASH, probably doesn't hurt
+                    '-movflags +faststart',
+                    //MSE is more picky with supported profiles than the browser normally is it seems,
+					//so try and require that every thing supports a
+					goodProfile ? '-c:v copy' : '-c:v libx264 -profile:v high -level:v 4.0 -pix_fmt yuv420p',
+                    //make sure we have key frames often
+					'-x264opts "keyint=24:min-keyint=24:no-scenecut"',
+					quotedVideoTranscodePath
 				]);
+				goodProfile ? progress.videoStreamsCopied++ : progress.videoStreamsTranscoded++;
+			},
+			//audio transcode
+			async () => {
+				/**
+				 * From the original video transcode individual audio clips for each audio stream
+				 */
+				for (let i = 0; i < video.audioStreams.length; i++) {
+					const audioStream = video.audioStreams[i],
+						//if it's mp3 we leave it, anything not mp3 or aac gets converted to aac
+						//so mp3 is the only case where it's anything but aac
+						codec = audioStream.codec_name === 'mp3' ? 'mp3' : 'aac',
+						fileNameBase = `${video.videoNameBase}-${i}`,
+						fileName = `${fileNameBase}.${codec}`,
+						dashFileName = `${fileNameBase}_dashinit.mp4`,
+						goodProfile = isGoodAudioProfile(audioStream),
+						audioPath = path.join(destPath, fileName);
 
-				metadata.subtitles.push({
-					format: extension,
-					language: subtitleStream.tags.language,
-					title: subtitleStream.tags.title || subtitleStream.tags.language || `Subtitle Stream ${i + 1}`,
-					content: (await fs.readFile(extractFilePath)).toString()
-				});
+					await runffmpeg([
+						`-i "${video.videoPath}"`,
+						`-map 0:a:${i}`,
+						goodProfile ? '-c:a copy' : '-acodec aac',
+						`"${audioPath}"`
+					]);
 
-				//delete the temporary file for extracting the subtitles, we save the full contents in metadata since it's just text
-				await fs.unlink(extractFilePath);
-				progress.subtitleTracksExtracted++;
+					metadata.audio.push({
+						language: audioStream.tags.language,
+						title: audioStream.tags.title,
+						codec,
+						//used just until we dash the file
+						intermediateFileName: fileName,
+						fileName: dashFileName,
+					});
+
+					goodProfile ? progress.audioStreamsCopied++ : progress.audioStreamsTranscoded++;
+					updateProgress();
+				}
+			},
+			//dash
+			async () => {
+				const dashBaseArgs = [
+					'MP4Box',
+					'-dash 10000',
+					'-frag 10000',
+					'-rap',
+					'-bs-switching no',
+					'-segment-timeline'
+				];
+
+				function execDash(extraArgs) {
+					return exec([
+						...dashBaseArgs,
+						...extraArgs
+					].join(' '), {
+						cwd: destPath
+					});
+				}
+
+				//create an MPD file and dash the video so it can be streamed with MSE
+				await execDash([
+					`"${videoTranscodeFile}"#video`,
+				]);
+				//there is a new '[video name]_dash.mp4' file now that is going to be used, get rid of the original
+				await fs.unlink(videoTranscodePath);
+
+				//embed the MPD file in the metadata file
+				const videoMPDFilePath = path.join(destPath, `${video.videoNameBase}_dash.mpd`);
+				metadata.mpd = (await fs.readFile(videoMPDFilePath)).toString()
+				await fs.unlink(videoMPDFilePath);
+
+				//dash audio
+				for (const audio of metadata.audio) {
+					await execDash([
+						`"${audio.intermediateFileName}"`,
+					]);
+
+					const mpdFilePath = path.join(destPath, `${removeExtension(audio.intermediateFileName)}_dash.mpd`);
+					audio.mpd = (await fs.readFile(mpdFilePath)).toString()
+					await fs.unlink(mpdFilePath);
+                    //now that we have the dashed audio file, we don't need the original or any reference to it
+					//and can delete it to save storage space
+                    await fs.unlink(path.join(destPath, audio.intermediateFileName));
+					audio.intermediateFileName = undefined;
+				}
+			},
+			//subtitle extraction
+			async () => {
+				for (let i = 0; i < video.subtitleStreams.length; i++) {
+					const subtitleStream = video.subtitleStreams[i],
+						extension = getSubtitleExtension(subtitleStream.codec_name);
+					if (safeCodecs.subtitle.includes(subtitleStream.codec_name)) {
+						const extractFilePath = `./temp/temp-extract.${extension}`;
+						await runffmpeg([
+							//don't prompt if we want to overwrite the file, it's a temp file so nothing worthwhile would be lost.
+							//if somehow a transcode failed and this file still exists we'd otherwise just sit there and spin
+							'-y',
+							`-analyzeduration 50M -probesize 50M`,
+							`-c:s ${subtitleStream.codec_name}`,
+							`-i "${video.videoPath}"`,
+							`-map 0:s:${i}`,
+							extractFilePath
+						]);
+
+						metadata.subtitles.push({
+							format: extension,
+							language: subtitleStream.tags.language,
+							title: subtitleStream.tags.title || subtitleStream.tags.language || `Subtitle Stream ${i + 1}`,
+							content: (await fs.readFile(extractFilePath)).toString()
+						});
+
+						//delete the temporary file for extracting the subtitles, we save the full contents in metadata since it's just text
+						await fs.unlink(extractFilePath);
+						progress.subtitleTracksExtracted++;
+					}
+					else {
+						progress.subtitleTracksSkipped++;
+					}
+				}
 			}
-			else {
-				progress.subtitleTracksSkipped++;
-			}
+		];
+
+		//run each step in sequence, updating progress each time
+		taskDetails.total = steps.length;
+		updateProgress();
+		for (const step of steps) {
+			await step();
+			taskDetails.done++;
 			updateProgress();
 		}
-
-		//delete the temporary file, now that we've exported individual audio stream files
-		await fs.unlink(`./${temporaryFullTranscodePath}`);
-
-		taskDetails.done++;
-		updateProgress();
 
 		await fs.writeFile(
 			path.join(destPath, `${video.videoNameBase}-metadata.json`),
