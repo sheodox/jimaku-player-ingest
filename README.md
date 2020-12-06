@@ -26,3 +26,8 @@ Install all programs listed above, then in a terminal window in this directory, 
 1. [Navigate to the ingest site](http://localhost:3600)
 1. Hit the `Convert` button
 1. When everything is done, copy everything in `videos/dest` to Jimaku Player's `videos` directory
+
+The codecs and profiles are color coded signaling how fast the conversion will be.
+* green - the codec or profile is a known web-safe codec, conversion will be fast because it doesn't have to do much but changing the container.
+* yellow - the codec or profile isn't a web-safe codec, it will take a considerably longer amount of time to convert because it will need to transcode.
+* red - (only subtitles) this codec isn't supported by Jimaku Player and will be ignored. This is often the case for image based subtitle formats.
