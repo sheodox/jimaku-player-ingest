@@ -381,6 +381,9 @@ async function convert(onProgress, onCriticalError) {
 			updateProgress();
 
 			if (process.env.STOP_ON_FAILURE === '1') {
+				converting = false;
+				progress.endTime = Date.now();
+				updateProgress();
 				throw e;
 			}
 		}
