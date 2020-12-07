@@ -7,6 +7,9 @@
 	.column + .column {
 		margin-left: 0.5rem;
 	}
+	.failed {
+		color: var(--accent-red);
+	}
 </style>
 
 {#if $progress}
@@ -17,6 +20,12 @@
 				<label for="total-progress">Finished ({$progress.done}/{$progress.total})</label>
 				<Progress value={$progress.done} max={$progress.total} id="total-progress"/>
 				<TaskTime task={$progress}>
+					<tr slot="extra-rows">
+						{#if $progress.failed > 0}
+							<th scope="row">Failures</th>
+							<td class="failed"><em>{$progress.failed}</em></td>
+						{/if}
+					</tr>
 					<tr slot="extra-rows">
 						{#if $progress.done < $progress.total && $currentFileName}
 							<th scope="row">Processing</th>

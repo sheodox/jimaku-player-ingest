@@ -19,6 +19,8 @@ Install all programs listed above, then in a terminal window in this directory, 
 1. `npm install`
 1. `npm run build`
 1. `npm start`
+
+Create a `.env` file using the `.env.example` file as a base. Configure it as you want.
   
 ## Usage
 

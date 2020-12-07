@@ -3,3 +3,4 @@ node_modules
 static/main.js
 temp
 videos
+.env
