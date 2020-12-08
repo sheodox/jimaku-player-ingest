@@ -14,14 +14,17 @@
 		color: var(--accent-red);
 		text-transform: uppercase;
 	}
+    .modal-body {
+		padding: 0 1rem 1rem 1rem;
+	}
 </style>
-<div class="panel" class:failed={$videoProgress && $videoProgress.failed}>
+<div class="panel" class:failed={$videoProgress && $videoProgress.error}>
 	<h2 title={details.videoPath}>{details.videoName}</h2>
 
-	{#if $videoProgress && $videoProgress.failed}
-		<span class="failed-message">
+	{#if $videoProgress && $videoProgress.error}
+		<button class="failed-message" on:click={() => showError = true}>
 			Processing Failed
-		</span>
+		</button>
 	{/if}
 
 	<div class="f-row justify-content-between">
@@ -31,13 +34,28 @@
 	</div>
 </div>
 
+{#if showError}
+	<Modal bind:visible={showError} title="Processing Error - {details.videoName}">
+		<div class="modal-body">
+			<p>
+				{$videoProgress.error.message}
+			</p>
+			<pre>
+			{$videoProgress.error.stack}
+		</pre>
+		</div>
+	</Modal>
+{/if}
+
 <script>
 	import StreamDetails from "./StreamDetails.svelte";
 	import VideoTranscodeProgress from "./VideoTranscodeProgress.svelte";
 	import {derived} from "svelte/store";
 	import {progress} from "./progress";
+	import {Modal} from 'sheodox-ui';
 
 	export let details;
+	let showError;
 
 	const videoProgress = derived(progress, progress => {
 		return progress?.tasks.find(t => t.videoPath === details.videoPath);

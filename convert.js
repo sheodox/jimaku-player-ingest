@@ -375,7 +375,15 @@ async function convert(onProgress, onCriticalError) {
 			updateProgress();
 		}
 		catch(e) {
-			taskDetails.failed = true;
+			Object.assign(taskDetails, {
+				endTime: Date.now(),
+				processing: false,
+				processed: true,
+                error: {
+					message: e.message,
+					stack: e.stack
+				}
+			});
 			progress.failed++;
 			onCriticalError(e);
 			updateProgress();
