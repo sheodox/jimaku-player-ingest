@@ -49,6 +49,11 @@
 			<tr>
 				<td class={isGoodAudioCodec(stream) ? 'good' : 'ok'}>
 					<abbr title={stream.codec_long_name}>{stream.codec_name}</abbr>
+					{#if parseFloat(stream.start_time) !== 0}
+						<abbr class="ok" title="Audio that starts at a different time than the video needs to be corrected, resample requires transcoding even if the codec and profile are good.">
+							desynced
+						</abbr>
+					{/if}
 				</td>
 				<td
 					class={isGoodAudioProfile(stream) ? 'good' : 'ok'}

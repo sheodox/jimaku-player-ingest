@@ -185,7 +185,7 @@ async function convert(onProgress, onCriticalError) {
 			 * functional in Chrome and Firefox). To get around this we use Media Source Extensions and DASH.
 			 */
 			const destPath = path.dirname(video.videoPath)
-					.replace('./videos/src', './videos/dest');
+				.replace('./videos/src', './videos/dest');
 
 			const videoTranscodeFile = video.videoNameBase + '.mp4',
 				videoTranscodePath = `${path.join(destPath, videoTranscodeFile)}`,
@@ -193,8 +193,11 @@ async function convert(onProgress, onCriticalError) {
 
 			//track some metadata, including names of individually extracted audio streams
 			const metadata = {
-				name: video.videoNameBase,
-				video: `${video.videoNameBase}_dashinit.mp4`,
+				title: video.videoNameBase,
+				video: {
+					fileName: `${video.videoNameBase}_dashinit.mp4`,
+					probe: video.videoStreams[0],
+				},
 				audio: [],
 				subtitles: []
 			};
@@ -240,13 +243,14 @@ async function convert(onProgress, onCriticalError) {
 							fileNameBase = `${video.videoNameBase}-${i}`,
 							fileName = `${fileNameBase}.${codec}`,
 							dashFileName = `${fileNameBase}_dashinit.mp4`,
+							hasAudioDelay = parseFloat(audioStream.start_time) !== 0,
 							goodProfile = isGoodAudioProfile(audioStream),
 							audioPath = path.join(destPath, fileName);
 
 						await runffmpeg([
 							`-i "${video.videoPath}"`,
 							`-map 0:a:${i}`,
-							goodProfile ? '-c:a copy' : '-acodec aac',
+							goodProfile && !hasAudioDelay ? '-c:a copy' : '-acodec aac -af "aresample=async=1:min_hard_comp=0.100000:first_pts=0"',
 							`"${audioPath}"`
 						]);
 
@@ -257,6 +261,7 @@ async function convert(onProgress, onCriticalError) {
 							//used just until we dash the file
 							intermediateFileName: fileName,
 							fileName: dashFileName,
+							probe: audioStream
 						});
 
 						goodProfile ? progress.audioStreamsCopied++ : progress.audioStreamsTranscoded++;
@@ -292,7 +297,7 @@ async function convert(onProgress, onCriticalError) {
 
 					//embed the MPD file in the metadata file
 					const videoMPDFilePath = path.join(destPath, `${video.videoNameBase}_dash.mpd`);
-					metadata.mpd = (await fs.readFile(videoMPDFilePath)).toString()
+					metadata.video.mpd = (await fs.readFile(videoMPDFilePath)).toString()
 					await fs.unlink(videoMPDFilePath);
 
 					//dash audio
@@ -332,7 +337,8 @@ async function convert(onProgress, onCriticalError) {
 								format: extension,
 								language: subtitleStream.tags.language,
 								title: subtitleStream.tags.title || subtitleStream.tags.language || `Subtitle Stream ${i + 1}`,
-								content: (await fs.readFile(extractFilePath)).toString()
+								content: (await fs.readFile(extractFilePath)).toString(),
+								probe: subtitleStream
 							});
 
 							//delete the temporary file for extracting the subtitles, we save the full contents in metadata since it's just text
