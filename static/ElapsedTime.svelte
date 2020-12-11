@@ -23,7 +23,7 @@
 			hours = Math.floor((seconds / 3600)),
 			minutesRemainder = hoursRemainder % 60,
 			minutes = Math.floor(hoursRemainder / 60);
-		const pad = num => num.toFixed(0).padStart(2, '0');
+        const pad = num => Math.floor(num).toString().padStart(2, '0');
 		return (hours > 0 || forcePadHours ? [hours, minutes, minutesRemainder] : [minutes, minutesRemainder])
 			.map(pad).join(':');
 	}
