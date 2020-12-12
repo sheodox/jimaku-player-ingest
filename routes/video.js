@@ -16,6 +16,10 @@ module.exports = (io) => {
 		}
 	}
 
+	function onDetectProgress(progress) {
+		io.emit('detectionProgress', progress);
+	}
+
 	let converting = false,
 		detectPromise;
 
@@ -30,7 +34,7 @@ module.exports = (io) => {
 			//if a detect request was already made, just reuse that instead of starting a second concurrent one
 			if (!detectPromise) {
 				console.log('scanning videos');
-				detectPromise = detect();
+				detectPromise = detect(onDetectProgress);
 			}
 			detected = await detectPromise;
 			detectPromise = null;
@@ -66,7 +70,7 @@ module.exports = (io) => {
 			io.emit('criticalError', errorToToastArguments('Critical Error!', e));
 		}
 
-		const transcodePromise = tryConvert(onStart, onProgress, onError, onCriticalError);
+		const transcodePromise = tryConvert(onStart, onProgress, onError, onCriticalError, onDetectProgress);
 
 		res.send();
 	});

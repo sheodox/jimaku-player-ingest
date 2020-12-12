@@ -27,14 +27,21 @@ function removeExtension(fileName) {
 }
 
 //ensure source and destination directories exist, even if the first run means they contain nothing, the directories will be set up
-async function detect() {
+async function detect(onDetectProgress) {
 	await mkdirp('./temp');
 	await mkdirp('./videos/src');
 	await mkdirp('./videos/dest');
 	await mkdirp('./videos/src-done');
 
 	const videos = await glob(`./videos/src/**/*.mkv`),
-		detected = [];
+		detected = [],
+		progress = {
+			done: 0,
+			total: videos.length,
+			currentVideo: ''
+		},
+		updateProgress = () => onDetectProgress(progress);
+	updateProgress();
 
 	for (let i = 0; i < videos.length; i++) {
 		const videoPath = videos[i],
@@ -44,7 +51,10 @@ async function detect() {
 			subtitleProbe = JSON.parse((await exec(`ffprobe -v error -show_streams -select_streams s "${videoPath}" -print_format json`)).stdout),
 			audioStreams = audioProbe.streams,
 			videoStreams = videoProbe.streams,
-			subtitleStreams = subtitleProbe.streams;
+			subtitleStreams = subtitleProbe.streams,
+			videoName = path.basename(videoPath);
+		progress.currentVideo = videoName;
+		updateProgress();
 
 		const mediaInfoOutput = (await exec(`mediainfo "${videoPath}" --Inform="Text;%ID%,%Format%|"`)).stdout,
 			mediaInfoCodecNames = new Map(mediaInfoOutput
@@ -66,15 +76,18 @@ async function detect() {
 		}
 
 		detected.push({
-			videoName: path.basename(videoPath),
+			videoName,
 			videoNameBase: removeExtension(videoPath),
 			videoPath,
 			audioStreams,
 			videoStreams,
 			subtitleStreams
 		});
+		progress.done++;
+		updateProgress();
 	}
 
+	onDetectProgress(null);
 	console.log(`scan done! detected ${detected.length} video(s)`);
 	return detected;
 }
@@ -105,7 +118,7 @@ function runffmpeg(args) {
 }
 
 let converting = false;
-async function tryConvert(onStart, onProgress, onError, onCriticalError) {
+async function tryConvert(onStart, onProgress, onError, onCriticalError, onDetectProgress) {
 	if (converting) {
 		onError(new Error(`Already transcoding!`));
 		return;
@@ -132,7 +145,7 @@ async function tryConvert(onStart, onProgress, onError, onCriticalError) {
 
 	//this takes a long time, onProgress will emit occasional progress events to the browser,
 	//so dont await this. the caller only cares if it started or not
-	await convert(onProgress, onCriticalError)
+	await convert(onProgress, onCriticalError, onDetectProgress)
 		.then(() => {
 			converting = false;
 		})
@@ -141,7 +154,7 @@ async function tryConvert(onStart, onProgress, onError, onCriticalError) {
 		})
 }
 
-async function convert(onProgress, onCriticalError) {
+async function convert(onProgress, onCriticalError, onDetectProgress) {
 	//cumulative stats for how long everything takes and what was needed
 	const progress = {
 		done: 0,
@@ -161,7 +174,7 @@ async function convert(onProgress, onCriticalError) {
 	const updateProgress = () => onProgress(progress);
 	updateProgress();
 
-	const detected = await detect();
+	const detected = await detect(onDetectProgress);
 	progress.total = detected.length;
 	updateProgress();
 
@@ -211,24 +224,23 @@ async function convert(onProgress, onCriticalError) {
 			const steps = [
 				//video transcode
 				async () => {
-					const goodProfile = isGoodVideoProfile(video.videoStreams[0]);
 					//transcode the video
 					await runffmpeg([
 						`-i "${video.videoPath}"`,
 						//select all video and audio streams, transcode them all for now, then
 						//split them out into distinct videos per audio stream later
 						`-map 0:v:0`, //probably don't need more than one video stream?
+						`-r 24 -vsync cfr`, //ensure a constant framerate
 						//move some data to the beginning of the container, this apparently makes
 						//streaming faster but probably doesn't matter with DASH, probably doesn't hurt
 						'-movflags +faststart',
-						//MSE is more picky with supported profiles than the browser normally is it seems,
-						//so try and require that every thing supports a
-						goodProfile ? '-c:v copy' : '-c:v libx264 -profile:v high -level:v 4.0 -pix_fmt yuv420p',
+                        //use a specific h264 profile that is most likely to be supported by MSE (it's picky)
+						'-c:v libx264 -profile:v high -level:v 4.0 -pix_fmt yuv420p',
 						//make sure we have key frames often
 						'-x264opts "keyint=24:min-keyint=24:no-scenecut"',
 						quotedVideoTranscodePath
 					]);
-					goodProfile ? progress.videoStreamsCopied++ : progress.videoStreamsTranscoded++;
+					progress.videoStreamsTranscoded++;
 				},
 				//audio transcode
 				async () => {
@@ -243,14 +255,12 @@ async function convert(onProgress, onCriticalError) {
 							fileNameBase = `${video.videoNameBase}-${i}`,
 							fileName = `${fileNameBase}.${codec}`,
 							dashFileName = `${fileNameBase}_dashinit.mp4`,
-							hasAudioDelay = parseFloat(audioStream.start_time) !== 0,
-							goodProfile = isGoodAudioProfile(audioStream),
 							audioPath = path.join(destPath, fileName);
 
 						await runffmpeg([
 							`-i "${video.videoPath}"`,
 							`-map 0:a:${i}`,
-							goodProfile && !hasAudioDelay ? '-c:a copy' : '-acodec aac -af "aresample=async=1:min_hard_comp=0.100000:first_pts=0"',
+							'-acodec aac -b:a 192k -af "aresample=async=1:min_hard_comp=0.100000:first_pts=0"',
 							`"${audioPath}"`
 						]);
 
@@ -264,7 +274,7 @@ async function convert(onProgress, onCriticalError) {
 							probe: audioStream
 						});
 
-						goodProfile ? progress.audioStreamsCopied++ : progress.audioStreamsTranscoded++;
+						progress.audioStreamsTranscoded++;
 						updateProgress();
 					}
 				},

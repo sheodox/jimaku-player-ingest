@@ -21,6 +21,7 @@
 		</button>
 	</div>
 
+	<DetectionProgress />
 	<TranscodeProgress />
 
 	{#if $detected}
@@ -40,6 +41,7 @@
 <script>
 	import {Header, Loading, Icon, Toasts} from 'sheodox-ui';
 	import VideoDetails from "./VideoDetails.svelte";
+	import DetectionProgress from './DetectionProgress.svelte';
 	import {detected, detect} from "./video-details";
 	import TranscodeProgress from './TranscodeProgress.svelte';
 

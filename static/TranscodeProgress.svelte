@@ -38,16 +38,8 @@
 			<table class="column">
 				<tbody>
 				<tr>
-					<th scope="row">Video Copied</th>
-					<td>{$progress.videoStreamsCopied}</td>
-				</tr>
-				<tr>
 					<th scope="row">Video Transcoded</th>
 					<td>{$progress.videoStreamsTranscoded}</td>
-				</tr>
-				<tr>
-					<th scope="row">Audio Copied</th>
-					<td>{$progress.audioStreamsCopied}</td>
 				</tr>
 				<tr>
 					<th scope="row">Audio Transcoded</th>
