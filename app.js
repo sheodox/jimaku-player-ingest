@@ -9,5 +9,5 @@ app.use('/fontawesome', express.static('./node_modules/@fortawesome/fontawesome-
 app.get('/*', express.static('./static'));
 
 http.listen(3600, () => {
-	console.log('mkv2mp4 server running');
+	console.log('Jimaku Player Ingest server running');
 });

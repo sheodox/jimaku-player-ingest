@@ -10,7 +10,7 @@
 <Header appName="Jimaku Player Ingest" />
 
 <div class="page-content f-column">
-	<div class="f-row panel justify-content-center" id="toolbar">
+	<div class="f-row justify-content-center" id="toolbar">
 		<button on:click={() => detect(true)} disabled={!$detected}>
 			<Icon icon="binoculars" />
 			Rescan

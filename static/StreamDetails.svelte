@@ -1,19 +1,19 @@
 <style>
 	/* no conversion needed */
     .good {
-        color: limegreen;
+        color: var(--shdx-green-500);
     }
 	/* can be converted */
 	.ok {
-		color: orange;
+		color: var(--shdx-orange-500);
 	}
 	/* not supported */
     .bad {
-        color: var(--accent-red);
+        color: var(--shdx-red-500);
     }
 </style>
 
-<div class="f-row">
+<div class="f-row align-items-start">
 	<table>
 		<caption>Video Streams</caption>
 		<thead>
@@ -60,8 +60,8 @@
 				>
 					{stream.profile || ''}
 				</td>
-				<td>{stream.tags.language ?? ''}</td>
-				<td>{stream.tags.title ?? ''}</td>
+				<td>{stream.tags?.language ?? ''}</td>
+				<td>{stream.tags?.title ?? ''}</td>
 			</tr>
 		{/each}
 		</tbody>
@@ -82,8 +82,8 @@
 				<td class={safeCodecs.subtitle.includes(stream.codec_name) ? 'good' : 'bad'}>
 					<abbr title={stream.codec_long_name}>{stream.codec_name}</abbr>
 				</td>
-				<td>{stream.tags.language ?? ''}</td>
-				<td>{stream.tags.title ?? ''}</td>
+				<td>{stream.tags?.language ?? ''}</td>
+				<td>{stream.tags?.title ?? ''}</td>
 			</tr>
 		{/each}
 		</tbody>

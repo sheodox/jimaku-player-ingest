@@ -26,6 +26,10 @@ function removeExtension(fileName) {
 	return path.basename(fileName, path.extname(fileName));
 }
 
+async function ffprobe(cmd) {
+	return JSON.parse((await exec(`ffprobe -v error ${cmd} -print_format json`)).stdout);
+}
+
 //ensure source and destination directories exist, even if the first run means they contain nothing, the directories will be set up
 async function detect(onDetectProgress) {
 	await mkdirp('./temp');
@@ -33,7 +37,7 @@ async function detect(onDetectProgress) {
 	await mkdirp('./videos/dest');
 	await mkdirp('./videos/src-done');
 
-	const videos = await glob(`./videos/src/**/*.mkv`),
+	const videos = await glob(`./videos/src/**/*.{mkv,mp4}`),
 		detected = [],
 		progress = {
 			done: 0,
@@ -46,9 +50,9 @@ async function detect(onDetectProgress) {
 	for (let i = 0; i < videos.length; i++) {
 		const videoPath = videos[i],
 			//collect information on the audio and video streams
-			audioProbe = JSON.parse((await exec(`ffprobe -v error -show_streams -select_streams a "${videoPath}" -print_format json`)).stdout),
-			videoProbe = JSON.parse((await exec(`ffprobe -v error -show_streams -select_streams v "${videoPath}" -print_format json`)).stdout),
-			subtitleProbe = JSON.parse((await exec(`ffprobe -v error -show_streams -select_streams s "${videoPath}" -print_format json`)).stdout),
+			audioProbe = await ffprobe(`-show_streams -select_streams a "${videoPath}"`),
+			videoProbe = await ffprobe(`-show_streams -select_streams v "${videoPath}"`),
+			subtitleProbe = await ffprobe(`-show_streams -select_streams s "${videoPath}"`),
 			audioStreams = audioProbe.streams,
 			videoStreams = videoProbe.streams,
 			subtitleStreams = subtitleProbe.streams,
@@ -200,7 +204,8 @@ async function convert(onProgress, onCriticalError, onDetectProgress) {
 			const destPath = path.dirname(video.videoPath)
 				.replace('./videos/src', './videos/dest');
 
-			const videoTranscodeFile = video.videoNameBase + '.mp4',
+			// the __ prefix identifies this as a dashed video segment to Jimaku Player so it can serve non-dashed videos too
+			const videoTranscodeFile = '__' + video.videoNameBase + '.mp4',
 				videoTranscodePath = `${path.join(destPath, videoTranscodeFile)}`,
 				quotedVideoTranscodePath = `"${videoTranscodePath}"`;
 
@@ -208,7 +213,7 @@ async function convert(onProgress, onCriticalError, onDetectProgress) {
 			const metadata = {
 				title: video.videoNameBase,
 				video: {
-					fileName: `${video.videoNameBase}_dashinit.mp4`,
+					fileName: `__${video.videoNameBase}_dashinit.mp4`,
 					probe: video.videoStreams[0],
 				},
 				audio: [],
@@ -253,8 +258,8 @@ async function convert(onProgress, onCriticalError, onDetectProgress) {
 							//so mp3 is the only case where it's anything but aac
 							codec = audioStream.codec_name === 'mp3' ? 'mp3' : 'aac',
 							fileNameBase = `${video.videoNameBase}-${i}`,
-							fileName = `${fileNameBase}.${codec}`,
-							dashFileName = `${fileNameBase}_dashinit.mp4`,
+							fileName = `__${fileNameBase}.${codec}`,
+							dashFileName = `__${fileNameBase}_dashinit.mp4`,
 							audioPath = path.join(destPath, fileName);
 
 						await runffmpeg([
@@ -265,8 +270,8 @@ async function convert(onProgress, onCriticalError, onDetectProgress) {
 						]);
 
 						metadata.audio.push({
-							language: audioStream.tags.language,
-							title: audioStream.tags.title,
+							language: audioStream.tags?.language,
+							title: audioStream.tags?.title || `Audio Stream ${i + 1}`,
 							codec,
 							//used just until we dash the file
 							intermediateFileName: fileName,
@@ -306,7 +311,7 @@ async function convert(onProgress, onCriticalError, onDetectProgress) {
 					await fs.unlink(videoTranscodePath);
 
 					//embed the MPD file in the metadata file
-					const videoMPDFilePath = path.join(destPath, `${video.videoNameBase}_dash.mpd`);
+					const videoMPDFilePath = path.join(destPath, `__${video.videoNameBase}_dash.mpd`);
 					metadata.video.mpd = (await fs.readFile(videoMPDFilePath)).toString()
 					await fs.unlink(videoMPDFilePath);
 
@@ -321,7 +326,7 @@ async function convert(onProgress, onCriticalError, onDetectProgress) {
 						await fs.unlink(mpdFilePath);
 						//now that we have the dashed audio file, we don't need the original or any reference to it
 						//and can delete it to save storage space
-						await fs.unlink(path.join(destPath, audio.intermediateFileName));
+						// await fs.unlink(path.join(destPath, audio.intermediateFileName));
 						audio.intermediateFileName = undefined;
 					}
 				},
@@ -345,8 +350,8 @@ async function convert(onProgress, onCriticalError, onDetectProgress) {
 
 							metadata.subtitles.push({
 								format: extension,
-								language: subtitleStream.tags.language,
-								title: subtitleStream.tags.title || subtitleStream.tags.language || `Subtitle Stream ${i + 1}`,
+								language: subtitleStream.tags?.language,
+								title: subtitleStream.tags?.title || subtitleStream.tags?.language || `Subtitle Stream ${i + 1}`,
 								content: (await fs.readFile(extractFilePath)).toString(),
 								probe: subtitleStream
 							});
@@ -371,7 +376,7 @@ async function convert(onProgress, onCriticalError, onDetectProgress) {
 			}
 
 			await fs.writeFile(
-				path.join(destPath, `${video.videoNameBase}-metadata.json`),
+				path.join(destPath, `${video.videoNameBase}-manifest.json`),
 				JSON.stringify(metadata, null, 4)
 			);
 
